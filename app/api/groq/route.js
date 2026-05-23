@@ -6,21 +6,21 @@ const MAX_MESSAGE_LENGTH = 2000;
 
 // Rate limiting setup
 const RATE_LIMIT_WINDOW = 60 * 1000; // 1 minute
-const MAX_REQUESTS_PER_WINDOW = 10; // max 10 requests per minute
+const MAX_REQUESTS_PER_WINDOW = 10;
 const rateLimitMap = new Map();
 
+/**
+ * Checks if a user has exceeded their rate limit.
+ * Also performs basic cleanup of old timestamps.
+ */
 const isRateLimited = (userId) => {
   const now = Date.now();
-  if (!rateLimitMap.has(userId)) {
-    rateLimitMap.set(userId, [now]);
-    return false;
-  }
+  const userRequests = rateLimitMap.get(userId) || [];
 
-  const timestamps = rateLimitMap.get(userId);
-  const validTimestamps = timestamps.filter((t) => now - t < RATE_LIMIT_WINDOW);
+  // Filter valid requests and cleanup memory
+  const validTimestamps = userRequests.filter((t) => now - t < RATE_LIMIT_WINDOW);
 
   if (validTimestamps.length >= MAX_REQUESTS_PER_WINDOW) {
-    rateLimitMap.set(userId, validTimestamps);
     return true;
   }
 
@@ -31,25 +31,23 @@ const isRateLimited = (userId) => {
 
 export async function POST(request) {
   try {
+    // 1. Authentication
     const authorization = request.headers.get("authorization");
     const token = authorization?.split(" ")[1];
-
     const decodedToken = await verifyFirebaseToken(token);
 
     if (!decodedToken) {
       return jsonError("Unauthorized", 401);
     }
 
-    // Rate limiting per authenticated user
+    // 2. Rate Limiting
     if (isRateLimited(decodedToken.uid)) {
       return jsonError("Too many requests. Please try again later.", 429);
     }
 
-    // Usage logging with user ID for audit/quota tracking
-    console.log(`[nova-ai-quota-tracker] Paid Groq API request by User UID: ${decodedToken.uid} (${decodedToken.email}) at ${new Date().toISOString()}`);
-
-    const { message, userMessage } = await request.json();
-    const rawMessage = typeof message === "string" ? message : userMessage;
+    // 3. Request Parsing & Validation
+    const body = await request.json();
+    const rawMessage = typeof body.message === "string" ? body.message : body.userMessage;
     const trimmedMessage = rawMessage?.trim();
 
     if (!trimmedMessage) {
@@ -60,15 +58,18 @@ export async function POST(request) {
       return jsonError("Message is too long", 400);
     }
 
+    // 4. API Configuration
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) {
-      return jsonError("Groq API key is not configured", 500);
+      console.error("Critical: GROQ_API_KEY missing");
+      return jsonError("Internal server configuration error", 500);
     }
 
-    const timeoutMs = parseInt(process.env.GROQ_TIMEOUT || "30000", 10) || 30000;
+    const timeoutMs = parseInt(process.env.GROQ_TIMEOUT || "30000", 10);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
+    // 5. Groq API Call
     let response;
     try {
       response = await fetch(GROQ_API_URL, {
@@ -83,8 +84,7 @@ export async function POST(request) {
           messages: [
             {
               role: "system",
-              content:
-                "You are Nova, the friendly AI assistant for Learnova - a Smart Student Engagement Ecosystem. You help with questions about attendance automation, smart activities, security features, analytics, and educational technology. Always be helpful, informative, and encouraging. Keep responses concise but comprehensive.",
+              content: "You are Nova, the friendly AI assistant for Learnova - a Smart Student Engagement Ecosystem. You help with questions about attendance automation, smart activities, security features, analytics, and educational technology. Always be helpful, informative, and encouraging. Keep responses concise but comprehensive.",
             },
             { role: "user", content: trimmedMessage },
           ],
@@ -97,25 +97,25 @@ export async function POST(request) {
     }
 
     if (!response.ok) {
-      const errorBody = await response.json().catch(() => ({}));
-      return jsonError(
-        errorBody?.error?.message || "Groq request failed",
-        response.status,
-      );
+      const errorData = await response.json().catch(() => ({}));
+      return jsonError(errorData?.error?.message || "Groq API request failed", response.status);
     }
 
     const data = await response.json();
     const content = data?.choices?.[0]?.message?.content;
 
     if (!content) {
-      return jsonError("Groq response was empty", 502);
+      return jsonError("AI generated an empty response", 502);
     }
 
+    // Log success for quota tracking
+    console.log(`[nova-ai-quota-tracker] Request successful for User: ${decodedToken.uid}`);
+
     return jsonSuccess({ message: content });
+
   } catch (error) {
     if (error.name === "AbortError") {
-      console.error("Groq API request timed out:", error);
-      return jsonError("Gateway Timeout: Groq did not respond in time.", 504);
+      return jsonError("Gateway Timeout: AI response took too long.", 504);
     }
     console.error("Groq API route error:", error);
     return jsonError("Internal server error", 500);
