@@ -101,6 +101,53 @@ export const POST = withErrorHandler(async (request) => {
     firebaseUid: decodedToken.uid,
     imageUrl: blobUrl,
   });
+    const rawFaceDescriptor = formData.get("faceDescriptor");
+    let faceDescriptor = null;
+    if (rawFaceDescriptor) {
+      try {
+        faceDescriptor = JSON.parse(rawFaceDescriptor);
+      } catch {
+        throw new ValidationError("Invalid face descriptor format");
+      }
+    }
+
+    if (!file || typeof file === "string" || !file.type) {
+      throw new ValidationError("File is required and must be a valid file");
+    }
+
+    const MAX_FILE_SIZE = 5 * 1024 * 1024;
+    const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+
+    if (file.size > MAX_FILE_SIZE) {
+      throw new ValidationError("File size exceeds 5MB limit");
+    }
+
+    if (!ALLOWED_IMAGE_TYPES.has(file.type)) {
+      throw new ValidationError("Invalid image type");
+    }
+
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    // Upload to Vercel Blob
+    const fileExtension = file.type.split("/")[1] || "jpg";
+    const fileName = `avatars/${decodedToken.uid}-${randomUUID()}.${fileExtension}`;
+    const blob = await put(fileName, buffer, {
+      contentType: file.type,
+      access: "public",
+    });
+
+    // Update in MongoDB if exists
+    const db = await connectDb();
+    const users = db.collection("users");
+    const updatePayload = { image: blob.url };
+    if (faceDescriptor) {
+      updatePayload.faceDescriptor = faceDescriptor;
+    }
+    await users.updateOne(
+      { firebaseUid: decodedToken.uid },
+      { $set: updatePayload }
+    );
 
   return NextResponse.json({ success: true, url: blobUrl });
 });

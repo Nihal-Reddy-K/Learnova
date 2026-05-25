@@ -12,6 +12,7 @@ import {
 export const dynamic = "force-dynamic";
 
 import { checkRateLimit } from "@/lib/rateLimit";
+import { detectInjection, sanitizeMessage, buildSecureMessages } from "@/utils/promptGuard";
 
 export const POST = withErrorHandler(async (request) => {
   const decodedToken = await authenticateRequest(request);
@@ -65,6 +66,16 @@ export async function POST(request) {
 
     const trimmedMessage = rawMessage.trim();
 
+    // Check for prompt injection
+    const injectionCheck = detectInjection(trimmedMessage);
+    if (injectionCheck.isInjection) {
+      console.warn(`[nova-ai-safety] Injection blocked for user ${decodedToken.uid}: ${injectionCheck.matchedPattern}`);
+      return jsonError("Safety check: System instructions override or prompt injection attempt detected.", 400);
+    }
+
+    // Sanitize user message
+    const sanitizedMessage = sanitizeMessage(trimmedMessage);
+
     // API key
     const apiKey =
       process.env.GROQ_API_KEY;
@@ -105,17 +116,10 @@ export async function POST(request) {
           signal: controller.signal,
           body: JSON.stringify({
             model: "llama-3.1-8b-instant",
-            messages: [
-              {
-                role: "system",
-                content:
-                  "You are Nova, the friendly AI assistant for Learnova - a Smart Student Engagement Ecosystem.",
-              },
-              {
-                role: "user",
-                content: trimmedMessage,
-              },
-            ],
+            messages: buildSecureMessages(
+              sanitizedMessage,
+              "You are Nova, the friendly AI assistant for Learnova - a Smart Student Engagement Ecosystem."
+            ),
             max_tokens: 400,
             temperature: 0.7,
           }),
