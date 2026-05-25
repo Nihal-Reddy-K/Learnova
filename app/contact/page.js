@@ -1,7 +1,8 @@
 "use client";
 import { Navbar } from "@/components/Navbar";
 import DarkVeil from "@/components/ui-block/DarkVeil";
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
+import { useTheme } from "next-themes";
 import Link from "next/link";
 import { CONTACT_INFO } from '@/constants/contact';
 import {
@@ -22,6 +23,10 @@ import emailjs from "@emailjs/browser";
 import toast from "react-hot-toast";
 
 export default function Contact() {
+  const { theme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const isDark = mounted ? theme === "dark" : true;
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -31,6 +36,37 @@ export default function Contact() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitStatus, setSubmitStatus] = useState(null);
   const [errors, setErrors] = useState({});
+  const [cooldown, setCooldown] = useState(false);
+  const [cooldownTimer, setCooldownTimer] = useState(0);
+
+  useEffect(() => {
+    let interval; // Store interval reference securely
+    const COOLDOWN_MS = 60 * 1000;
+    const lastSubmit = localStorage.getItem('learnova_contact_last_submit');
+    if (lastSubmit) {
+      const elapsed = Date.now() - parseInt(lastSubmit);
+      const remaining = Math.ceil((COOLDOWN_MS - elapsed) / 1000);
+      if (remaining > 0) {
+        setCooldown(true);
+        setCooldownTimer(remaining);
+        interval = setInterval(() => {
+          setCooldownTimer((prev) => {
+            if (prev <= 1) {
+              clearInterval(interval);
+              setCooldown(false);
+              return 0;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+      }
+    }
+    
+    // CRITICAL FIX: Cleanup function to destroy the interval on component unmount
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, []);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -48,22 +84,17 @@ export default function Contact() {
 
   const validateForm = () => {
     const newErrors = {};
+    const { name, email, message } = formData;
 
-    if (!formData.name.trim()) {
-      newErrors.name = "Name is required";
-    } else if (formData.name.trim().length < 2) {
+    if (!name.trim() || name.trim().length < 2) {
       newErrors.name = "Name must be at least 2 characters";
     }
 
-    if (!formData.email.trim()) {
-      newErrors.email = "Email is required";
-    } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       newErrors.email = "Enter a valid email address";
     }
 
-    if (!formData.message.trim()) {
-      newErrors.message = "Message is required";
-    } else if (formData.message.trim().length < 10) {
+    if (!message.trim() || message.trim().length < 10) {
       newErrors.message = "Message must be at least 10 characters";
     }
 
@@ -75,16 +106,23 @@ export default function Contact() {
   const handleSubmit = async (e) => {
   e.preventDefault();
 
-    if (!validateForm()) {
-  toast.error("Please fix the highlighted fields before submitting.");
-  
-  setSubmitStatus({
-    type: "error",
-    message: "Please fix the highlighted fields before submitting.",
-  });
+  const COOLDOWN_MS = 60 * 1000;
+  const lastSubmit = localStorage.getItem('learnova_contact_last_submit');
+  if (lastSubmit && Date.now() - parseInt(lastSubmit) < COOLDOWN_MS) {
+    setSubmitStatus({
+      type: 'error',
+      message: `Please wait ${cooldownTimer} seconds before sending another message.`,
+    });
+    return;
+  }
 
-  return;
-}
+  if (!validateForm()) {
+    setSubmitStatus({
+      type: "error",
+      message: "Please fix the highlighted fields before submitting.",
+    });
+    return;
+  }
 
   setIsSubmitting(true);
   setSubmitStatus(null);
@@ -111,6 +149,19 @@ export default function Contact() {
       message: "",
     });
 
+    localStorage.setItem('learnova_contact_last_submit', Date.now().toString());
+    setCooldown(true);
+    let seconds = 60;
+    setCooldownTimer(seconds);
+    const interval = setInterval(() => {
+      seconds -= 1;
+      setCooldownTimer(seconds);
+      if (seconds === 0) {
+        clearInterval(interval);
+        setCooldown(false);
+      }
+    }, 1000);
+
     setErrors({});
   } catch (error) {
     setSubmitStatus({
@@ -128,8 +179,8 @@ export default function Contact() {
     {
       icon: Mail,
       label: "Email",
-      value: "shawprem217@gmail.com",
-      href: "mailto:hello@learnova.com",
+      value: CONTACT_INFO.email,
+      href: `mailto:${CONTACT_INFO.email}`,
       gradient: "from-blue-500 to-cyan-500",
     },
     {
@@ -171,8 +222,8 @@ export default function Contact() {
   return (
     <>
       {/* Background */}
-      <div className="fixed inset-0 -z-10">
-        <DarkVeil />
+      <div className="fixed inset-0 -z-10 bg-background">
+        {isDark && <DarkVeil />}
 
         {/* Animated background elements */}
         <div className="absolute inset-0 overflow-hidden">
@@ -204,18 +255,18 @@ export default function Contact() {
         {/* Hero Section */}
         <section className="pt-32 pb-16 px-4 sm:px-6 lg:px-8">
           <div className="max-w-4xl mx-auto text-center">
-            <div className="inline-flex items-center px-4 py-2 bg-gradient-to-r from-accent/20 to-purple-500/20 rounded-full border border-accent/30 backdrop-blur-sm mb-6">
-              <MessageCircle className="w-5 h-5 text-accent-foreground mr-2" />
-              <span className="text-accent-foreground font-medium">Get in Touch</span>
+            <div className="inline-flex items-center px-4 py-2 bg-gradient-to-r from-accent/10 to-purple-500/10 dark:from-accent/20 dark:to-purple-500/20 rounded-full border border-accent/20 dark:border-accent/30 backdrop-blur-sm mb-6">
+              <MessageCircle className="w-5 h-5 text-accent dark:text-accent-foreground mr-2" />
+              <span className="text-accent dark:text-accent-foreground font-medium">Get in Touch</span>
             </div>
 
-            <h1 className="text-5xl md:text-6xl font-bold text-white mb-6">
+            <h1 className="text-5xl md:text-6xl font-bold text-foreground dark:text-white mb-6">
               Contact{" "}
               <span className="bg-gradient-to-r from-accent via-purple-400 to-pink-400 bg-clip-text text-transparent">
                 Learnova
               </span>
             </h1>
-            <p className="text-xl md:text-2xl text-gray-300 leading-relaxed max-w-3xl mx-auto">
+            <p className="text-xl md:text-2xl text-muted-foreground leading-relaxed max-w-3xl mx-auto">
               Ready to transform your educational institution? Let's discuss how
               Learnova can streamline your operations and enhance student
               success.
@@ -228,12 +279,12 @@ export default function Contact() {
             <div className="grid lg:grid-cols-2 gap-16">
               {/* Contact Form */}
               <div className="relative">
-                <div className="bg-black/40 backdrop-blur-xl rounded-3xl p-8 border border-white/10 hover:border-accent/30 transition-all duration-500">
+                <div className="bg-card backdrop-blur-xl rounded-3xl p-8 border border-border hover:border-accent/30 transition-border duration-500">
                   <div className="mb-8">
-                    <h2 className="text-3xl font-bold text-white mb-4">
+                    <h2 className="text-3xl font-bold text-foreground mb-4">
                       Send us a Message
                     </h2>
-                    <p className="text-gray-400">
+                    <p className="text-muted-foreground">
                       Fill out the form below and our team will get back to you
                       within 24 hours.
                     </p>
@@ -242,16 +293,17 @@ export default function Contact() {
                   <form onSubmit={handleSubmit} className="space-y-6">
                     <div className="grid md:grid-cols-2 gap-6">
                       <div className="space-y-2">
-                        <label className="block text-white font-medium">
+                        <label htmlFor="contact-name" className="block text-foreground font-medium">
                           Full Name *
                         </label>
                         <input
+                          id="contact-name"
                           type="text"
                           name="name"
                           value={formData.name}
                           onChange={handleInputChange}
                           placeholder="Enter your full name"
-                          className="w-full p-4 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent/50 transition-all duration-300"
+                          className="w-full p-4 bg-background border border-border rounded-xl text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent/50 transition-colors duration-300"
                         />
                         {errors.name && (
                           <p className="text-red-400 text-sm mt-1">
@@ -261,16 +313,17 @@ export default function Contact() {
                       </div>
 
                       <div className="space-y-2">
-                        <label className="block text-white font-medium">
+                        <label htmlFor="contact-email" className="block text-foreground font-medium">
                           Email Address *
                         </label>
                         <input
+                          id="contact-email"
                           type="email"
                           name="email"
                           value={formData.email}
                           onChange={handleInputChange}
                           placeholder="you@example.com"
-                          className="w-full p-4 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent/50 transition-all duration-300"
+                          className="w-full p-4 bg-background border border-border rounded-xl text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent/50 transition-colors duration-300"
                         />
                         {errors.email && (
                           <p className="text-red-400 text-sm mt-1">
@@ -281,30 +334,32 @@ export default function Contact() {
                     </div>
 
                     <div className="space-y-2">
-                      <label className="block text-white font-medium">
+                      <label htmlFor="contact-company" className="block text-foreground font-medium">
                         Institution/Company
                       </label>
                       <input
+                        id="contact-company"
                         type="text"
                         name="company"
                         value={formData.company}
                         onChange={handleInputChange}
                         placeholder="Your institution or company name"
-                        className="w-full p-4 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent/50 transition-all duration-300"
+                        className="w-full p-4 bg-background border border-border rounded-xl text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent/50 transition-colors duration-300"
                       />
                     </div>
 
                     <div className="space-y-2">
-                      <label className="block text-white font-medium">
+                      <label htmlFor="contact-message" className="block text-foreground font-medium">
                         Message *
                       </label>
                       <textarea
+                        id="contact-message"
                         name="message"
                         value={formData.message}
                         onChange={handleInputChange}
                         rows="5"
                         placeholder="Tell us about your needs and how we can help..."
-                        className="w-full p-4 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent/50 transition-all duration-300 resize-none"
+                        className="w-full p-4 bg-background border border-border rounded-xl text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent/50 transition-colors duration-300 resize-none"
                       />
                       {errors.message && (
                         <p className="text-red-400 text-sm mt-1">
@@ -332,13 +387,18 @@ export default function Contact() {
 
                     <button
                       type="submit"
-                      disabled={isSubmitting}
-                      className="group w-full bg-gradient-to-r from-accent to-purple-500 text-white py-4 px-6 rounded-xl font-semibold hover:shadow-xl hover:shadow-accent/25 transition-all duration-300 hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3"
+                      disabled={isSubmitting || cooldown}
+                      className="group w-full bg-gradient-to-r from-accent to-purple-500 text-white py-4 px-6 rounded-xl font-semibold hover:shadow-xl hover:shadow-accent/25 transition-transform duration-300 hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3"
                     >
                       {isSubmitting ? (
                         <>
                           <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                           Sending...
+                        </>
+                      ) : cooldown ? (
+                        <>
+                          <Clock className="w-5 h-5" />
+                          Please wait {cooldownTimer}s
                         </>
                       ) : (
                         <>
@@ -354,8 +414,8 @@ export default function Contact() {
               {/* Contact Information */}
               <div className="space-y-8">
                 {/* Contact Details */}
-                <div className="bg-black/40 backdrop-blur-xl rounded-3xl p-8 border border-white/10">
-                  <h3 className="text-2xl font-bold text-white mb-6">
+                <div className="bg-card backdrop-blur-xl rounded-3xl p-8 border border-border">
+                  <h3 className="text-2xl font-bold text-foreground mb-6">
                     Get in Touch
                   </h3>
 
@@ -365,20 +425,20 @@ export default function Contact() {
                         <div
                           className={`w-12 h-12 bg-gradient-to-br ${info.gradient} rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform duration-300`}
                         >
-                          <info.icon className="w-6 h-6 text-white" />
+                          <info.icon className="w-6 h-6 text-foreground" />
                         </div>
                         <div>
-                          <p className="text-gray-400 text-sm">{info.label}</p>
+                          <p className="text-muted-foreground text-sm">{info.label}</p>
 
                           {info.href ? (
                             <a
                               href={info.href}
-                              className="text-white text-lg font-medium hover:text-accent transition-colors duration-300"
+                              className="text-foreground text-lg font-medium hover:text-accent transition-colors duration-300"
                             >
                               {info.value}
                             </a>
                           ) : (
-                            <p className="text-white text-lg font-medium">
+                            <p className="text-foreground text-lg font-medium">
                               {info.value}
                             </p>
                           )}
@@ -389,32 +449,32 @@ export default function Contact() {
                 </div>
 
                 {/* Business Hours */}
-                <div className="bg-black/40 backdrop-blur-xl rounded-3xl p-8 border border-white/10">
+                <div className="bg-card backdrop-blur-xl rounded-3xl p-8 border border-border">
                   <div className="flex items-center gap-3 mb-6">
                     <div className="w-12 h-12 bg-gradient-to-br from-orange-500 to-red-500 rounded-xl flex items-center justify-center">
-                      <Clock className="w-6 h-6 text-white" />
+                      <Clock className="w-6 h-6 text-foreground" />
                     </div>
-                    <h3 className="text-2xl font-bold text-white">
+                    <h3 className="text-2xl font-bold text-foreground">
                       Business Hours
                     </h3>
                   </div>
 
                   <div className="space-y-3">
                     <div className="flex justify-between items-center">
-                      <span className="text-gray-400">Monday - Friday</span>
-                      <span className="text-white font-medium">
+                      <span className="text-muted-foreground">Monday - Friday</span>
+                      <span className="text-foreground font-medium">
                         9:00 AM - 6:00 PM
                       </span>
                     </div>
                     <div className="flex justify-between items-center">
-                      <span className="text-gray-400">Saturday</span>
-                      <span className="text-white font-medium">
+                      <span className="text-muted-foreground">Saturday</span>
+                      <span className="text-foreground font-medium">
                         10:00 AM - 4:00 PM
                       </span>
                     </div>
                     <div className="flex justify-between items-center">
-                      <span className="text-gray-400">Sunday</span>
-                      <span className="text-gray-400">Closed</span>
+                      <span className="text-muted-foreground">Sunday</span>
+                      <span className="text-muted-foreground">Closed</span>
                     </div>
                   </div>
 
@@ -428,8 +488,8 @@ export default function Contact() {
                 </div>
 
                 {/* Social Links */}
-                <div className="bg-black/40 backdrop-blur-xl rounded-3xl p-8 border border-white/10">
-                  <h3 className="text-2xl font-bold text-white mb-6">
+                <div className="bg-card backdrop-blur-xl rounded-3xl p-8 border border-border">
+                  <h3 className="text-2xl font-bold text-foreground mb-6">
                     Follow Us
                   </h3>
 
@@ -438,14 +498,14 @@ export default function Contact() {
                       <Link
                         key={index}
                         href={social.href}
-                        className={`w-12 h-12 bg-white/5 border border-white/10 rounded-xl flex items-center justify-center text-gray-400 ${social.color} transition-all duration-300 hover:scale-110 hover:border-current`}
+                        className={`w-12 h-12 bg-white/5 border border-white/10 rounded-xl flex items-center justify-center text-muted-foreground ${social.color} transition-transform duration-300 hover:scale-110 hover:border-current`}
                       >
                         <social.icon className="w-6 h-6" />
                       </Link>
                     ))}
                   </div>
 
-                  <p className="text-gray-400 text-sm mt-4">
+                  <p className="text-muted-foreground text-sm mt-4">
                     Stay updated with our latest features and educational
                     insights.
                   </p>
